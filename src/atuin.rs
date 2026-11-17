@@ -30,6 +30,11 @@ pub fn search(line: &str, path: Option<&str>, scope: &Scope) -> Vec<Suggestion> 
     if let Some(path) = path {
         cmd.env("PATH", path);
     }
+    // Atuin aborts without a session, and its shell hook exports one only inside the shell,
+    // after lig has started. A global search doesn't use it, so any value will do.
+    if std::env::var_os("ATUIN_SESSION").is_none() {
+        cmd.env("ATUIN_SESSION", "lig");
+    }
     cmd.args([
         "search",
         "--filter-mode=global",

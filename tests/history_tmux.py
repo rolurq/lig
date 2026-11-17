@@ -24,7 +24,9 @@ PROMPTS = {
     'nu': "$env.config.show_banner = false\n$env.PROMPT_COMMAND = {|| 'hist-test' }\n$env.PROMPT_COMMAND_RIGHT = ''\n",
 }
 # `atuin search … [-- query]`: the records containing the query, best last, NUL-terminated.
+# Like atuin, it fails without $ATUIN_SESSION, which only the shell's own hook exports.
 FAKE_ATUIN = r"""#!/bin/sh
+[ -n "$ATUIN_SESSION" ] || { echo 'Failed to find $ATUIN_SESSION in the environment.' >&2; exit 1; }
 printf '%s\n' "$*" >> "$FAKE_ATUIN_LOG"
 q=
 while [ $# -gt 0 ]; do
