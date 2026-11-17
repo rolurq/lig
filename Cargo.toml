@@ -6,7 +6,7 @@ rust-version = "1.85"
 authors = ["Keven Gonçalves"]
 description = "IDE-style autocomplete for your terminal on macOS, Linux and Windows"
 license = "MIT"
-repository = "https://github.com/KevenGoncalves/lig"
+repository = "https://github.com/rolurq/lig"
 
 [workspace]
 members = [".", "tools/figconv"]
