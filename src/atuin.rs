@@ -2,7 +2,9 @@
 //! record the commands; lig only reads them.
 
 use crate::engine::{Kind, Suggestion};
-use std::process::{Command, Stdio};
+use crate::exec::Cmd;
+use std::path::Path;
+use std::time::Duration;
 
 /// How many matches Ctrl+R shows.
 const LIMIT: &str = "50";
@@ -28,17 +30,12 @@ pub enum Scope {
 
 /// The commands that ran without error matching `line` (atuin's own search mode and
 /// ranking), best first; picking one replaces the line. Entries atuin imported have no exit
-/// status (-1): they stay. Atuin is found and run with the shell's `path`.
-pub fn search(line: &str, path: Option<&str>, scope: &Scope) -> Vec<Suggestion> {
+/// status (-1): they stay. Atuin is found and run with the shell's `path`, and killed after
+/// `timeout`: the one worker also answers completions, which a stuck search would hold up.
+pub fn search(line: &str, path: Option<&str>, scope: &Scope, timeout: Duration) -> Vec<Suggestion> {
     let query = line.trim_start();
-    let mut cmd = Command::new("atuin");
-    cmd.env("PATH", shell_path(path));
-    // Atuin aborts without a session, and its shell hook exports one only inside the shell,
-    // after lig has started. A global search doesn't use it, so any value will do.
-    if std::env::var_os("ATUIN_SESSION").is_none() {
-        cmd.env("ATUIN_SESSION", "lig");
-    }
-    cmd.args([
+    let mut argv: Vec<String> = [
+        "atuin",
         "search",
         "--filter-mode=global",
         "--exit=0",
@@ -48,27 +45,32 @@ pub fn search(line: &str, path: Option<&str>, scope: &Scope) -> Vec<Suggestion> 
         "--print0",
         "--format",
         "{relativetime}\t{command}",
-    ]);
+    ]
+    .map(String::from)
+    .into();
     if let Scope::Dir(dir) = scope {
-        cmd.arg("--cwd").arg(dir);
+        argv.extend(["--cwd".into(), dir.to_string_lossy().into_owned()]);
     }
     if !query.is_empty() {
-        cmd.arg("--").arg(query);
+        argv.extend(["--".into(), query.into()]);
     }
-    let out = match cmd.stdin(Stdio::null()).stderr(Stdio::null()).output() {
-        Ok(out) if out.status.success() => out.stdout,
-        Ok(_) => return vec![],
-        Err(e) => {
-            crate::log(&format!("atuin: {e}"));
-            return vec![];
-        }
-    };
+    let mut env = vec![("PATH".to_string(), shell_path(path))];
+    // Atuin aborts without a session, and its shell hook exports one only inside the shell,
+    // after lig has started. A global search doesn't use it, so any value will do.
+    if std::env::var_os("ATUIN_SESSION").is_none() {
+        env.push(("ATUIN_SESSION".into(), "lig".into()));
+    }
+    let out = crate::exec::run(Cmd::Argv(&argv), Path::new(""), &env, timeout, None);
+    if out.status != 0 {
+        crate::log(&format!("atuin: exit {}: {}", out.status, out.stderr.trim()));
+        return vec![];
+    }
     let delete = line.chars().count();
     // Atuin prints the best match last.
-    out.split(|&b| b == 0)
+    out.stdout
+        .split('\0')
         .rev()
         .filter_map(|record| {
-            let record = String::from_utf8_lossy(record);
             let (age, command) = record.split_once('\t')?;
             Some(Suggestion {
                 label: command.replace('\n', " ⏎ "),

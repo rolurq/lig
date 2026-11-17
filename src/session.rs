@@ -638,17 +638,15 @@ fn only_modes(mut bytes: &[u8]) -> bool {
 
 /// Answers the newest request: quick results (no commands run) first, then full ones.
 fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Behavior) {
+    let history_timeout = Duration::from_millis(behavior.generator_timeout_ms);
     let mut engine = Engine::new(Store::default(), behavior);
     while let Ok(mut req) = rx.recv() {
         while let Ok(newer) = rx.try_recv() {
             req = newer;
         }
         if let Some(scope) = req.history {
-            let _ = tx.send(Event::History {
-                items: crate::atuin::search(&req.line, req.env.path.as_deref(), &scope),
-                line: req.line,
-                scope,
-            });
+            let items = crate::atuin::search(&req.line, req.env.path.as_deref(), &scope, history_timeout);
+            let _ = tx.send(Event::History { items, line: req.line, scope });
             continue;
         }
         let c = engine.complete(&req.line, &req.env, false, req.manual);

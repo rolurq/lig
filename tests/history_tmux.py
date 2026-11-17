@@ -28,6 +28,7 @@ PROMPTS = {
 FAKE_ATUIN = r"""#!/bin/sh
 [ -n "$ATUIN_SESSION" ] || { echo 'Failed to find $ATUIN_SESSION in the environment.' >&2; exit 1; }
 printf '%s\n' "$*" >> "$FAKE_ATUIN_LOG"
+[ -z "$FAKE_ATUIN_HANG" ] || sleep 30
 q=
 while [ $# -gt 0 ]; do
   if [ "$1" = -- ]; then q=$2; break; fi
@@ -41,7 +42,7 @@ done
 
 @unittest.skipUnless(shutil.which('tmux'), 'tmux is required')
 class HistoryTmux(unittest.TestCase):
-    def start(self, kind, atuin=True):
+    def start(self, kind, atuin=True, hang=False, config=''):
         shell = SHELLS[kind]
         if not shell:
             self.skipTest(f'{kind} is unavailable')
@@ -66,6 +67,11 @@ class HistoryTmux(unittest.TestCase):
                'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
                'XDG_STATE_HOME': str(self.state), 'XDG_RUNTIME_DIR': str(runtime), 'SHELL': shell, 'LIG_LOG': '1',
                'HISTFILE': str(home / '.shell_history'), 'PATH': path, 'FAKE_ATUIN_LOG': str(self.atuin_log)}
+        if hang:
+            env['FAKE_ATUIN_HANG'] = '1'
+        if config:
+            (home / '.config/lig').mkdir(parents=True)
+            (home / '.config/lig/config.toml').write_text(config)
         rc = {'zsh': home / '.zshrc', 'bash': home / '.bashrc', 'fish': home / '.config/fish/config.fish',
               'nu': home / '.config/nushell/config.nu'}[kind]
         rc.parent.mkdir(parents=True, exist_ok=True)
@@ -139,6 +145,16 @@ class HistoryTmux(unittest.TestCase):
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
         self.wait('no global popup', lambda s: 'echo hist-ok' in s)
         self.assertNotIn('--cwd', self.atuin_log.read_text().splitlines()[-1])
+
+    def test_a_hanging_atuin_does_not_stall_completion(self):
+        self.start('zsh', hang=True, config='[behavior]\ngenerator_timeout_ms = 500\n')
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.wait('atuin was not asked', lambda s: self.atuin_log.exists() and self.atuin_log.read_text())
+        # Once the search times out, lig falls back to the usual suggestions for the line.
+        time.sleep(1.5)
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'ls -')
+        # One worker answers history and completion: a stuck search would leave `ls -` without options.
+        self.wait('completion stalled behind atuin', lambda s: '◆' in s, timeout=8)
 
     def test_without_atuin_ctrl_r_is_the_shells(self):
         self.start('bash', atuin=False)
