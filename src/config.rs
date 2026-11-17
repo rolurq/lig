@@ -232,6 +232,10 @@ pub struct Behavior {
     /// PyPI versions, Snap Store, Flathub). What you type for the package name is sent
     /// to them.
     pub online: bool,
+    /// Removed (history is atuin's): still read, so config files that set it load.
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    pub history: Option<bool>,
     /// Kill generator commands after this many milliseconds.
     pub generator_timeout_ms: u64,
     /// Cache generator results for this long when the spec doesn't say.
@@ -315,6 +319,7 @@ impl Default for Behavior {
             show_on_empty_token: true,
             complete_commands: false,
             online: true,
+            history: None,
             generator_timeout_ms: 5000,
             generator_cache_ms: 5000,
             disabled_commands: vec![],

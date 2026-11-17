@@ -25,6 +25,7 @@ pub fn search(line: &str, path: Option<&str>) -> Vec<Suggestion> {
     }
     cmd.args([
         "search",
+        "--filter-mode=global",
         "--exit=0",
         "--exit=-1",
         "--limit",

@@ -1454,6 +1454,10 @@ impl Session {
         if self.history_mode {
             let env = self.env.clone();
             let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: true });
+            // Enter waits for the answer, as for completions.
+            if !self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line) {
+                self.loading = Some((self.line.clone(), "Searching history".into(), Instant::now()));
+            }
             return;
         }
         let mut env = self.env.clone();
