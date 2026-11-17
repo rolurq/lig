@@ -14,10 +14,17 @@ pub fn installed(path: Option<&str>) -> bool {
     crate::help::which("atuin", path.unwrap_or(&own)).is_some()
 }
 
+/// What `search` looks through.
+pub enum Scope {
+    Global,
+    /// Only what ran in this folder.
+    Dir(std::path::PathBuf),
+}
+
 /// The commands that ran without error matching `line` (atuin's own search mode and
 /// ranking), best first; picking one replaces the line. Entries atuin imported have no exit
 /// status (-1): they stay. Atuin is found and run with the shell's `path`.
-pub fn search(line: &str, path: Option<&str>) -> Vec<Suggestion> {
+pub fn search(line: &str, path: Option<&str>, scope: &Scope) -> Vec<Suggestion> {
     let query = line.trim_start();
     let mut cmd = Command::new("atuin");
     if let Some(path) = path {
@@ -34,6 +41,9 @@ pub fn search(line: &str, path: Option<&str>) -> Vec<Suggestion> {
         "--format",
         "{relativetime}\t{command}",
     ]);
+    if let Scope::Dir(dir) = scope {
+        cmd.arg("--cwd").arg(dir);
+    }
     if !query.is_empty() {
         cmd.arg("--").arg(query);
     }

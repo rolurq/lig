@@ -192,6 +192,8 @@ pub struct Keys {
     pub toggle: Vec<String>,
     /// Show the commands you ran before, from atuin.
     pub history: Vec<String>,
+    /// Show the ones that ran in this folder, when the popup is closed.
+    pub history_dir: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +286,7 @@ impl Default for Keys {
             dismiss: v(&["esc"]),
             toggle: v(&["ctrl-space"]),
             history: v(&["ctrl-r"]),
+            history_dir: v(&["up"]),
         }
     }
 }

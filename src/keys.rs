@@ -387,6 +387,8 @@ pub enum Action {
     Dismiss,
     Toggle,
     History,
+    /// History of this folder.
+    HistoryDir,
 }
 
 /// The `[keys]` config, resolved.
@@ -403,6 +405,7 @@ impl Bindings {
             (&k.dismiss, Action::Dismiss),
             (&k.toggle, Action::Toggle),
             (&k.history, Action::History),
+            (&k.history_dir, Action::HistoryDir),
         ] {
             for n in names {
                 match Key::parse_name(n) {
@@ -419,6 +422,12 @@ impl Bindings {
 
     pub fn action(&self, key: &Key) -> Option<Action> {
         self.0.iter().find(|(k, _)| k == key).map(|(_, a)| *a)
+    }
+
+    /// Whether `key` is bound to `action`, even if another action comes first for it
+    /// (`up` is both the previous item and, with the popup closed, the folder's history).
+    pub fn is(&self, key: &Key, action: Action) -> bool {
+        self.0.iter().any(|(k, a)| k == key && *a == action)
     }
 }
 

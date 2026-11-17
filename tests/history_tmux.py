@@ -124,6 +124,20 @@ class HistoryTmux(unittest.TestCase):
     def test_nu(self):
         self.check_history('nu')
 
+    def test_up_arrow_searches_the_current_folder(self):
+        self.start('zsh')
+        self.tmux('send-keys', '-t', 'test:0.0', 'Up')
+        self.wait('no history popup', lambda s: 'echo hist-ok' in s and 'imported-by-atuin' in s)
+        calls = self.atuin_log.read_text().splitlines()
+        # The shell starts in the home folder; macOS may report it through /private.
+        cwd = [c.split('--cwd ')[1].split(' ')[0] for c in calls if '--cwd ' in c]
+        self.assertTrue(cwd and cwd[-1].endswith('/home'), calls)
+        self.tmux('send-keys', '-t', 'test:0.0', 'Escape')
+        self.wait('popup stayed', lambda s: '↺' not in s)
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.wait('no global popup', lambda s: 'echo hist-ok' in s)
+        self.assertNotIn('--cwd', self.atuin_log.read_text().splitlines()[-1])
+
     def test_without_atuin_ctrl_r_is_the_shells(self):
         self.start('bash', atuin=False)
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')

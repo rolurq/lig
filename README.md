@@ -223,6 +223,7 @@ Type as usual; the popup shows what fits.
 | `Esc` | close the popup |
 | `Ctrl+Space` | open or close the popup on demand |
 | `Ctrl+R` | your history: past commands matching what's typed |
+| `↑` (popup closed) | the history of the current folder |
 
 - **`Enter`** completes the word you're typing (`go bui` → `go build`) or picks the first
   suggestion after a space. On a word that's already complete (`git status`) it runs the
@@ -238,8 +239,10 @@ Type as usual; the popup shows what fits.
   `Enter` puts one on the line. Atuin's shell hooks record the commands (a command typed with
   a leading space is up to atuin's `ignorespace`). Without atuin on `PATH`, `Ctrl+R` stays
   with the shell.
-- **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
-  closed, fzf's `Ctrl+T`. Typing brings the popup back.
+- **`↑`** with the popup closed lists what ran in the current folder (atuin's `--cwd`);
+  `Ctrl+R` from there widens it to everything. Without atuin, `↑` is the shell's.
+- **Your shell's own keys stay yours**: `Tab` once the popup is closed, fzf's `Ctrl+T`.
+  Typing brings the popup back.
 
 ## Configuration
 
@@ -258,6 +261,7 @@ accept = ["enter"]
 next = ["tab", "down", "ctrl-n"]
 toggle = ["ctrl-space"]
 history = ["ctrl-r"]
+history_dir = ["up"]       # this folder's history, with the popup closed
 
 [behavior]
 enter_accepts = "auto"     # "always", "after-space", "never"

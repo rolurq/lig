@@ -88,8 +88,8 @@ struct Request {
     env: ShellEnv,
     /// Asked for with the toggle key.
     manual: bool,
-    /// Ctrl+R: ask atuin for `line`'s matches instead of completing it.
-    history: bool,
+    /// Ask atuin for `line`'s matches instead of completing it.
+    history: Option<crate::atuin::Scope>,
 }
 
 /// Remove one complete ANSI cursor report, preserving typeahead and other replies.
@@ -392,6 +392,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         bindings: Bindings::new(&cfg.keys),
         shell_asked: None,
         history_mode: false,
+        history_here: false,
         cfg,
         pty: writer,
         shell_pty: pty_handle,
@@ -641,9 +642,9 @@ fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Beh
         while let Ok(newer) = rx.try_recv() {
             req = newer;
         }
-        if req.history {
+        if let Some(scope) = &req.history {
             let _ = tx.send(Event::History {
-                items: crate::atuin::search(&req.line, req.env.path.as_deref()),
+                items: crate::atuin::search(&req.line, req.env.path.as_deref(), scope),
                 line: req.line,
             });
             continue;
@@ -768,6 +769,8 @@ struct Session {
     /// The line the shell was last asked about (see [`ZSH_COMPLETE_KEY`]).
     shell_asked: Option<String>,
     history_mode: bool,
+    /// The history shown is this folder's (Up), not everything (Ctrl+R).
+    history_here: bool,
     insert_file: PathBuf,
     /// Set by the prompt marker of bash, nu or cmd: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
@@ -1450,10 +1453,25 @@ impl Session {
         self.shown.and(self.stale_since).filter(|_| self.resync.is_none()).map(|since| since + LOADING_DELAY)
     }
 
+    /// The shell's folder: what it reports, else what its process is in.
+    fn shell_cwd(&self) -> PathBuf {
+        if self.env.cwd.as_os_str().is_empty() {
+            self.shell_pid.and_then(crate::process::cwd).unwrap_or_else(|| self.cwd_fallback.clone())
+        } else {
+            self.env.cwd.clone()
+        }
+    }
+
     fn request(&mut self) {
         if self.history_mode {
             let env = self.env.clone();
-            let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: true });
+            let scope = if self.history_here {
+                crate::atuin::Scope::Dir(self.shell_cwd())
+            } else {
+                crate::atuin::Scope::Global
+            };
+            let _ =
+                self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: Some(scope) });
             // Enter waits for the answer, as for completions.
             if !self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line) {
                 self.loading = Some((self.line.clone(), "Searching history".into(), Instant::now()));
@@ -1461,10 +1479,8 @@ impl Session {
             return;
         }
         let mut env = self.env.clone();
-        if env.cwd.as_os_str().is_empty() {
-            env.cwd = self.shell_pid.and_then(crate::process::cwd).unwrap_or_else(|| self.cwd_fallback.clone());
-        }
-        let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: false });
+        env.cwd = self.shell_cwd();
+        let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: None });
         // Loading until answered (the worker may be busy with an older request);
         // the first word only pops up on demand (or with `complete_commands`), so it gets no message.
         let first_word = !self.line.trim_start().contains(char::is_whitespace);
@@ -1618,12 +1634,24 @@ impl Session {
                 self.deferred = data[data.len() - rest..].to_vec();
                 break;
             }
-            if self.bindings.action(&key) == Some(Action::History)
+            if self.bindings.is(&key, Action::History)
                 && crate::atuin::installed(self.env.path.as_deref())
                 && self.can_show()
             {
-                self.toggle_history();
+                self.toggle_history(false);
                 redraw = true;
+                continue;
+            }
+            if self.bindings.is(&key, Action::HistoryDir)
+                && !self.popup_open()
+                && crate::atuin::installed(self.env.path.as_deref())
+                && self.can_show()
+            {
+                // Still searching: the key is ours, not the shell's.
+                if !self.history_mode {
+                    self.toggle_history(true);
+                    redraw = true;
+                }
                 continue;
             }
             if self.bindings.action(&key) == Some(Action::Toggle) && self.can_show() {
@@ -1683,7 +1711,7 @@ impl Session {
                     self.selected -= 1;
                     redraw = true;
                 }
-                Some(Action::History) => {
+                Some(Action::History | Action::HistoryDir) => {
                     // No atuin: the key is the shell's.
                     passthrough = true;
                     fwd.extend_from_slice(raw);
@@ -1848,9 +1876,11 @@ impl Session {
         self.write_pty(ZSH_COMPLETE_KEY);
     }
 
-    /// Show the commands that ran before, or leave them for the usual suggestions.
-    fn toggle_history(&mut self) {
-        self.history_mode = !self.history_mode;
+    /// Show the commands that ran before (`here`: in this folder), or leave them for the usual
+    /// suggestions. The other key's history replaces the one shown.
+    fn toggle_history(&mut self, here: bool) {
+        self.history_mode = !self.history_mode || self.history_here != here;
+        self.history_here = here;
         self.manual = self.history_mode;
         self.shell_nav = false;
         self.dismissed = None;
