@@ -14,6 +14,4 @@ use windows as imp;
 
 #[cfg(windows)]
 pub use imp::parent;
-#[cfg(target_os = "macos")]
-pub use imp::{argv, foreground, identity};
 pub use imp::{cwd, executable, foreign_program};

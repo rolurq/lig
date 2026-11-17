@@ -1,76 +1,6 @@
 use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
-
-fn parse_args(data: &[u8]) -> Option<Vec<OsString>> {
-    let argc = i32::from_ne_bytes(data.get(..4)?.try_into().ok()?);
-    if argc <= 0 || argc as usize > data.len() {
-        return None;
-    }
-    let mut rest = data.get(4..)?;
-    let path_end = rest.iter().position(|&b| b == 0)? + 1;
-    // XNU aligns the executable-path area to pointer size and KERN_PROCARGS2 keeps that alignment: do not skip all NULs, argv[0] may be empty.
-    let argv_start = path_end.checked_add(7)? & !7;
-    if rest.get(path_end..argv_start)?.iter().any(|&b| b != 0) {
-        return None;
-    }
-    rest = rest.get(argv_start..)?;
-    let mut args = Vec::new();
-    for _ in 0..argc {
-        let end = rest.iter().position(|&b| b == 0)?;
-        args.push(OsString::from_vec(rest[..end].to_vec()));
-        rest = &rest[end + 1..];
-    }
-    Some(args)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn arguments_preserve_empty_spaces_and_non_utf8_without_environment() {
-        let mut bytes = 4i32.to_ne_bytes().to_vec();
-        bytes.extend_from_slice(b"/bin/test\0");
-        bytes.resize(4 + 16, 0);
-        bytes.extend_from_slice(b"test\0two words\0\0\xff\0SECRET=hidden\0");
-        assert_eq!(
-            parse_args(&bytes),
-            Some(vec!["test".into(), "two words".into(), "".into(), OsString::from_vec(vec![255])])
-        );
-    }
-    #[test]
-    fn empty_argv_zero_never_consumes_environment() {
-        let mut bytes = 2i32.to_ne_bytes().to_vec();
-        bytes.extend_from_slice(b"/bin/sleep\0");
-        bytes.resize(4 + 16, 0); // 64-bit exec pathname padding
-        bytes.extend_from_slice(b"\0".as_slice());
-        bytes.extend_from_slice(b"10\0LIG_TEST_SENTINEL=not-a-secret\0");
-        assert_eq!(parse_args(&bytes), Some(vec!["".into(), "10".into()]));
-    }
-    #[test]
-    fn pointer_aligned_path_has_no_padding() {
-        // "/bin/ls\0" ends exactly on 8 bytes: argv starts right after it.
-        let mut bytes = 1i32.to_ne_bytes().to_vec();
-        bytes.extend_from_slice(b"/bin/ls\0ls\0HOME=/x\0");
-        assert_eq!(parse_args(&bytes), Some(vec!["ls".into()]));
-    }
-    #[test]
-    fn rejects_truncated_or_invalid_arguments() {
-        let mut truncated = 2i32.to_ne_bytes().to_vec();
-        truncated.extend_from_slice(b"/bin/test\0");
-        truncated.resize(4 + 16, 0);
-        truncated.extend_from_slice(b"test\0unterminated");
-        for data in [
-            truncated,
-            vec![],
-            (-1i32).to_ne_bytes().to_vec(),
-            [2i32.to_ne_bytes().as_slice(), b"/bin/test\0test\0unterminated"].concat(),
-        ] {
-            assert!(parse_args(&data).is_none());
-        }
-    }
-}
-
 use std::mem::size_of;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 fn path(chars: impl IntoIterator<Item = libc::c_char>) -> Option<PathBuf> {
@@ -126,22 +56,6 @@ pub fn children(pid: u32) -> Vec<u32> {
     let mut pids = vec![0i32; (size as usize + 32).min(65536)];
     let n = unsafe { libc::proc_listchildpids(pid, pids.as_mut_ptr().cast(), (pids.len() * size_of::<i32>()) as i32) };
     pids.into_iter().take(n.max(0) as usize).filter_map(|p| u32::try_from(p).ok().filter(|&p| p > 0)).collect()
-}
-
-pub fn foreground(pid: u32) -> Option<u32> {
-    bsd(pid).map(|i| i.e_tpgid).filter(|&p| p > 0 && p <= i32::MAX as u32)
-}
-
-pub fn argv(pid: u32) -> Option<Vec<OsString>> {
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, i32::try_from(pid).ok()?];
-    let mut buf = vec![0u8; 1024 * 1024];
-    let mut size = buf.len();
-    let result =
-        unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) };
-    if result != 0 || size > buf.len() {
-        return None;
-    }
-    parse_args(&buf[..size])
 }
 
 // ABI from Apple's sys/proc_info.h; libc provides vnode_info_path but not these wrappers.
@@ -219,21 +133,6 @@ pub fn foreign_program(shell: u32, tty: &Path) -> bool {
 #[cfg(test)]
 mod native_tests {
     use super::*;
-    #[test]
-    fn native_empty_argv_zero_stays_separate_from_environment() {
-        use std::os::unix::process::CommandExt;
-        let mut child = std::process::Command::new("/bin/sleep")
-            .arg0("")
-            .arg("10")
-            .env_clear()
-            .env("LIG_TEST_SENTINEL", "not-a-secret")
-            .spawn()
-            .unwrap();
-        let args = argv(child.id());
-        child.kill().unwrap();
-        child.wait().unwrap();
-        assert_eq!(args, Some(vec!["".into(), "10".into()]));
-    }
     #[test]
     fn detects_tty_descriptors() {
         let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize::default()).unwrap();
@@ -322,17 +221,11 @@ mod native_tests {
         let pid = std::process::id();
         assert_eq!(cwd(pid).unwrap().canonicalize().unwrap(), std::env::current_dir().unwrap().canonicalize().unwrap());
         assert_eq!(executable(pid).unwrap(), std::env::current_exe().unwrap());
-        assert!(!argv(pid).unwrap().is_empty());
         let mut child = std::process::Command::new("/bin/sleep").arg("10").spawn().unwrap();
         let found = children(pid).contains(&child.id());
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(found);
-        assert!(argv(u32::MAX).is_none());
         assert!(cwd(u32::MAX).is_none());
     }
-}
-
-pub fn identity(pid: u32) -> Option<(u64, u64)> {
-    bsd(pid).map(|i| (i.pbi_start_tvsec, i.pbi_start_tvusec))
 }

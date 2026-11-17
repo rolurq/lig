@@ -34,8 +34,8 @@ itself.
   scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI, Snap and Flathub.
 - Knows your **aliases, functions and variables** (`gco ` completes like `git checkout `,
   `$HO` → `$HOME`).
-- **History** on `Ctrl+R`: the commands that worked, from every session, fuzzy-searched.
-- Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
+- **History** on `Ctrl+R`: [atuin](https://atuin.sh)'s, the commands that worked, from every session.
+- Works in **any terminal**, and on a server with **`lig ssh`**.
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
 ## Try it in Docker
@@ -233,10 +233,11 @@ Type as usual; the popup shows what fits.
   run the line and **Back** to go up.
 - **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
   you type `-` (`options_after_dash`).
-- **History** (`Ctrl+R`) lists the commands that ran without error, in every Lig session,
-  newest first and each once; typing narrows it (fuzzy), and `Enter` puts one on the line.
-  It starts with what zsh, bash, fish and nu remember. A command typed with a leading space
-  isn't kept; `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
+- **History** (`Ctrl+R`) lists what [atuin](https://atuin.sh) remembers, the commands that
+  ran without error, best match first; typing narrows it (atuin's own search mode), and
+  `Enter` puts one on the line. Atuin's shell hooks record the commands (a command typed with
+  a leading space is up to atuin's `ignorespace`). Without atuin on `PATH`, `Ctrl+R` stays
+  with the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
   closed, fzf's `Ctrl+T`. Typing brings the popup back.
 
@@ -264,7 +265,6 @@ enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 online = true              # search package registries as you type
-history = true             # keep the commands that ran, for Ctrl+R
 completers = []            # for commands with no spec: ["shell", "argc"], see below
 disabled_commands = []     # never show the popup for these
 
@@ -323,21 +323,13 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 `lig specs check` reports mistakes, `lig complete "deploy -e "` shows the suggestions, and
 `lig specs generators` lists the built-in live values (`generators = [{ builtin = "git:branches" }]`).
 
-## tmux, zellij and ssh
+## ssh
 
-- Lig shows the program running in a pane, and its folder, as its own: tmux, WezTerm and
-  `ps -t` see `nvim` or `claude` where you work, not `lig shell` (editor plugins that find
-  a coding agent by its pane need this). `LIG_NO_MIRROR=1` turns it off.
-- **tmux**: works as is.
-- **zellij**: session resurrection brings each pane back as its app in the right folder, not
-  as `lig shell`. On macOS this needs a zellij with `action set-resurrect-command` (newer
-  than 0.45.1). Don't resurrect with `zellij attach --force-run-commands`: the prompt zellij
-  shows for each pane is the safety net.
-- **ssh**: `scp` and `rsync` complete paths on the host (`scp notes.txt pi:Doc` →
-  `pi:Documents/`) when the login needs no password (a key, ssh-agent or a `ControlMaster`
-  connection). `lig ssh admin@pi` logs in like `ssh` and brings the popup to the host's zsh
-  or bash, installing nothing there; with a remote command it's plain `ssh`, so
-  `alias ssh='lig ssh'` is safe.
+`scp` and `rsync` complete paths on the host (`scp notes.txt pi:Doc` →
+`pi:Documents/`) when the login needs no password (a key, ssh-agent or a `ControlMaster`
+connection). `lig ssh admin@pi` logs in like `ssh` and brings the popup to the host's zsh
+or bash, installing nothing there; with a remote command it's plain `ssh`, so
+`alias ssh='lig ssh'` is safe.
 
 ## Update and remove
 
@@ -357,7 +349,7 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 | A key does nothing | `lig keys` shows whether the key reaches Lig, and its name. |
 | Outdated options for a command | `lig specs clear-cache` re-reads its `--help`. |
 | No `scp host:` paths | The host needs a login without a password prompt. |
-| `Ctrl+R` no longer opens my plugin (fzf, atuin…) | Lig's history has it: move it (`keys.history = ["alt-r"]`) or turn it off (`history = false`). |
+| `Ctrl+R` doesn't show atuin's history | Lig shows [atuin](https://atuin.sh)'s history when `atuin` is on the shell's `PATH`; without it the key goes to your shell. Move the key with `keys.history = ["alt-r"]`. |
 | Something else | Start a shell with `LIG_LOG=1` and read `lig.log` in `~/.local/state/lig/` (Linux) or `~/Library/Application Support/lig/` (macOS). |
 
 ## How it works
@@ -366,8 +358,7 @@ Lig runs your shell in a pseudo-terminal and passes everything through. It keeps
 the screen, draws the popup under the cursor, and restores what was underneath when it
 closes, which is why it works in any terminal (and on Wayland, where apps can't place
 floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's, nu's and
-cmd's are read off the screen, fish and PowerShell answer when Lig asks. At each prompt they
-also report the command that just ran and its exit status, for the history. Accepting sends
+cmd's are read off the screen, fish and PowerShell answer when Lig asks. Accepting sends
 a private key that a shell function binds to edit the line. nu's own commands (`ls`, `open`,
 `str replace`…) complete from nu's signatures, not from the coreutils of those names. Slow
 sources run in the background, so typing never waits.

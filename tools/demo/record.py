@@ -174,7 +174,8 @@ class Session:
                     'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
                     'XDG_STATE_HOME': str(home / '.local/state'), 'XDG_RUNTIME_DIR': str(runtime),
                     'SHELL': shutil.which('zsh'), 'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
-                    'HISTFILE': str(home / '.zsh_history'), 'PATH': f'{BIN.parent}:/usr/local/bin:/usr/bin:/bin',
+                    'HISTFILE': str(home / '.zsh_history'),
+                    'PATH': f'{BIN.parent}:{os.path.dirname(shutil.which("atuin"))}:/usr/local/bin:/usr/bin:/bin',
                     'GIT_CONFIG_GLOBAL': str(home / '.gitconfig')}
         git = lambda *a: subprocess.run(['git', *a], cwd=self.project, env=dict(os.environ, **self.env),
                                         check=True, capture_output=True)
@@ -202,6 +203,7 @@ class Session:
                    'cargo build --release', 'npm run dev', 'ssh deploy@staging', 'git push origin main',
                    'kubectl get pods -n production', 'python3 src/greet.py --name world']
         (home / '.zsh_history').write_text(''.join(f': {now - 600 + i}:0;{c}\n' for i, c in enumerate(history)))
+        subprocess.run(['atuin', 'import', 'zsh'], env=dict(os.environ, **self.env), check=True, capture_output=True)
         (home / '.config/lig').mkdir(parents=True)
         (home / '.config/lig/config.toml').write_text('[ui]\nicons = "nerd"\nborder = "rounded"\n'
                                                       '[behavior]\nonline = true\n')

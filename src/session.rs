@@ -74,6 +74,11 @@ enum Event {
         /// Ask the shell (zsh or bash) for its own completions of this line.
         ask_shell: Option<String>,
     },
+    /// Atuin's matches for `line` (Ctrl+R), best first.
+    History {
+        line: String,
+        items: Vec<Suggestion>,
+    },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
     ShellSpecs(crate::nushell::ShellSpecs),
 }
@@ -83,6 +88,8 @@ struct Request {
     env: ShellEnv,
     /// Asked for with the toggle key.
     manual: bool,
+    /// Ctrl+R: ask atuin for `line`'s matches instead of completing it.
+    history: bool,
 }
 
 /// Remove one complete ANSI cursor report, preserving typeahead and other replies.
@@ -313,10 +320,6 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     let insert_file = runtime.join(format!("lig-{}.insert", std::process::id()));
     let query_file = insert_file.with_extension("query");
     let mut cmd = shell_command(&shell, login);
-    #[cfg(target_os = "macos")]
-    if let (Ok(session), Ok(pane)) = (std::env::var("ZELLIJ_SESSION_NAME"), std::env::var("ZELLIJ_PANE_ID")) {
-        cmd.env(crate::mirror::PANE_OWNER_ENV, crate::mirror::pane_owner(&session, &pane));
-    }
     cmd.env("LIG_INSERT_FILE", &insert_file);
     cmd.env("LIG_QUERY_FILE", &query_file);
     let (pty_handle, reader, writer) = match Pty::spawn(&cmd, rows, cols) {
@@ -328,16 +331,6 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     };
     let tty = pty_handle.tty_name();
     let shell_pid = pty_handle.pid();
-    #[cfg(unix)]
-    let _mirror = shell_pid.and_then(|pid| {
-        crate::mirror::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
-    });
-    // macOS: the zellij mirror above takes zellij's API; this one is what `ps`, tmux and WezTerm see.
-    #[cfg(target_os = "macos")]
-    let _mirror_argv = shell_pid.and_then(|pid| {
-        crate::mirror_argv::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
-    });
-
     let raw = term::RawMode::enable()?;
     let (origin, typeahead) = terminal_origin();
     crate::log(&format!(
@@ -398,7 +391,6 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         cwd_fallback: std::env::current_dir().unwrap_or_else(|_| "/".into()),
         bindings: Bindings::new(&cfg.keys),
         shell_asked: None,
-        history: cfg.behavior.history.then(crate::history::History::open),
         history_mode: false,
         cfg,
         pty: writer,
@@ -588,16 +580,6 @@ fn prompt_marks(out: &[u8]) -> Vec<usize> {
         .collect()
 }
 
-/// How long ago, roughly: `5m ago`, `3h ago`, `2d ago`.
-fn ago(secs: u64) -> String {
-    match secs {
-        0..60 => "just now".into(),
-        60..3600 => format!("{}m ago", secs / 60),
-        3600..86400 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86400),
-    }
-}
-
 /// nu's own shell-integration marks say what lig's do for other shells: the prompt ends
 /// (`133;B`, before the input on every redraw) and a command starts (`133;C`).
 fn nu_marks(out: &[u8]) -> Vec<(usize, Msg)> {
@@ -658,6 +640,13 @@ fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Beh
     while let Ok(mut req) = rx.recv() {
         while let Ok(newer) = rx.try_recv() {
             req = newer;
+        }
+        if req.history {
+            let _ = tx.send(Event::History {
+                items: crate::atuin::search(&req.line, req.env.path.as_deref()),
+                line: req.line,
+            });
+            continue;
         }
         let c = engine.complete(&req.line, &req.env, false, req.manual);
         let _ = tx.send(Event::Done {
@@ -778,8 +767,6 @@ struct Session {
     cfg: Config,
     /// The line the shell was last asked about (see [`ZSH_COMPLETE_KEY`]).
     shell_asked: Option<String>,
-    /// The commands that ran (`behavior.history`), and whether the popup shows them now.
-    history: Option<crate::history::History>,
     history_mode: bool,
     insert_file: PathBuf,
     /// Set by the prompt marker of bash, nu or cmd: the line is read off the screen.
@@ -985,6 +972,7 @@ impl Session {
                     }
                     self.on_done(line, items, loading, command)
                 }
+                Event::History { line, items } => self.on_history(line, items),
                 Event::Resize => self.on_resize(),
                 // The local nu's, even when they come during a `lig ssh`.
                 Event::ShellSpecs(specs) => match &mut self.remote {
@@ -1396,15 +1384,6 @@ impl Session {
                 self.items_line.clear();
                 self.request();
             }
-            Msg::Ran { status, command } => {
-                // A leading space keeps a command out, as the shells' `ignorespace` options do.
-                if status == 0
-                    && !command.starts_with(' ')
-                    && let Some(history) = self.history.as_mut()
-                {
-                    history.record(&command);
-                }
-            }
             Msg::Finish => {
                 crate::log("reader finished");
                 self.history_mode = false;
@@ -1473,14 +1452,15 @@ impl Session {
 
     fn request(&mut self) {
         if self.history_mode {
-            self.show_history();
+            let env = self.env.clone();
+            let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: true });
             return;
         }
         let mut env = self.env.clone();
         if env.cwd.as_os_str().is_empty() {
             env.cwd = self.shell_pid.and_then(crate::process::cwd).unwrap_or_else(|| self.cwd_fallback.clone());
         }
-        let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual });
+        let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: false });
         // Loading until answered (the worker may be busy with an older request);
         // the first word only pops up on demand (or with `complete_commands`), so it gets no message.
         let first_word = !self.line.trim_start().contains(char::is_whitespace);
@@ -1634,7 +1614,10 @@ impl Session {
                 self.deferred = data[data.len() - rest..].to_vec();
                 break;
             }
-            if self.bindings.action(&key) == Some(Action::History) && self.history.is_some() && self.can_show() {
+            if self.bindings.action(&key) == Some(Action::History)
+                && crate::atuin::installed(self.env.path.as_deref())
+                && self.can_show()
+            {
                 self.toggle_history();
                 redraw = true;
                 continue;
@@ -1697,7 +1680,7 @@ impl Session {
                     redraw = true;
                 }
                 Some(Action::History) => {
-                    // No history (`behavior.history` off): the key is the shell's.
+                    // No atuin: the key is the shell's.
                     passthrough = true;
                     fwd.extend_from_slice(raw);
                 }
@@ -1872,27 +1855,11 @@ impl Session {
         self.request();
     }
 
-    /// The history matching the line, newest first; picking one replaces the line.
-    fn show_history(&mut self) {
-        let fuzzy = self.cfg.behavior.fuzzy;
-        let Some(history) = self.history.as_mut() else { return };
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        let delete = self.line.chars().count();
-        let items = history
-            .search(&self.line, fuzzy)
-            .into_iter()
-            .take(500)
-            .map(|(time, command)| Suggestion {
-                label: command.replace('\n', " ⏎ "),
-                description: if time == 0 { String::new() } else { ago(now.saturating_sub(time)) },
-                kind: Kind::Command,
-                icon: Some(crate::spec::Icon::History),
-                insert: command,
-                delete,
-                back: 0,
-                query: self.line.trim_start().to_string(),
-            })
-            .collect::<Vec<_>>();
+    /// Atuin's matches for the line, best first; picking one replaces the line.
+    fn on_history(&mut self, line: String, items: Vec<Suggestion>) {
+        if !self.history_mode || line != self.line {
+            return;
+        }
         if items.is_empty() {
             // Nothing matches: back to the usual suggestions.
             self.history_mode = false;
@@ -1902,7 +1869,7 @@ impl Session {
         }
         self.loading = None;
         // As the worker's answers do: an Enter held for this line can go now.
-        self.on_done(self.line.clone(), items, None, String::new());
+        self.on_done(line, items, None, String::new());
     }
 
     /// Esc again right after closing the popup; sent on, zsh would read the next key as Alt+key.

@@ -20,7 +20,6 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   _lig_line_init() { _lig_last=; _lig_report }
   _lig_line_finish() {
     _lig_last=
-    _lig_ran=$BUFFER
     builtin print -rn -- $'\e]6973;F\a' >$TTY
   }
 
@@ -50,15 +49,10 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_lig_insert)
 
   # Generators need the shell's cwd and PATH; aliases, functions and exported variables sent on change (split by \x1e).
-  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent= _lig_ran=
+  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent=
   _lig_precmd() {
     local ret=$?
     builtin emulate -L zsh
-    # The line that just ran, and how it ended (for lig's history).
-    if [[ -n $_lig_ran ]]; then
-      builtin print -rn -- $'\e]6973;E;'"$ret;${_lig_ran//[$'\a\e']/ }"$'\a' >$TTY
-      _lig_ran=
-    fi
     builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >$TTY
     local k
     local -a pairs

@@ -13,7 +13,6 @@
 //!   `N;<name>\x1e<name>…`  the shell's function names
 //!   `K;<name>\x1e<name>…`  the shell's builtins
 //!   `V;<k=v>\x1e<k=v>…`    the shell's exported variables
-//!   `E;<status>;<command>` the command that just ran, and how it ended (history)
 //!   `Z;<line>\x1d<name>\t<shown>\x1e…`  what the shell's Tab offers for line (zsh, bash)
 //!   `X;<pid>;<socket>;<host>`  `lig ssh` logs in to host (see `remote.rs`)
 //!   `Y`                    that `lig ssh` ended
@@ -44,11 +43,6 @@ pub enum Msg {
     ShellCompletions {
         line: String,
         items: Vec<(String, String)>,
-    },
-    /// The command that just ran, with its exit status (for the history).
-    Ran {
-        status: i32,
-        command: String,
     },
     Path(String),
     Cwd(String),
@@ -166,10 +160,6 @@ fn parse(payload: &[u8]) -> Option<Msg> {
                 .collect();
             Some(Msg::ShellCompletions { line: line.to_string(), items })
         }
-        "E" => {
-            let (status, command) = rest.split_once(';')?;
-            Some(Msg::Ran { status: status.trim().parse().ok()?, command: command.to_string() })
-        }
         "P" => Some(Msg::Path(rest.to_string())),
         "C" => Some(Msg::Cwd(rest.to_string())),
         "A" => Some(Msg::Aliases(pairs(rest))),
@@ -205,16 +195,6 @@ mod tests {
         );
         assert_eq!(parse(b"Z;ls \x1d"), Some(Msg::ShellCompletions { line: "ls ".into(), items: vec![] }));
         assert_eq!(parse(b"Z;no separator"), None);
-    }
-
-    #[test]
-    fn ran_carries_the_status_and_the_whole_line() {
-        assert_eq!(
-            parse(b"E;0;git log --format='%h;%s'"),
-            Some(Msg::Ran { status: 0, command: "git log --format='%h;%s'".into() })
-        );
-        assert_eq!(parse(b"E;127;nope"), Some(Msg::Ran { status: 127, command: "nope".into() }));
-        assert_eq!(parse(b"E;x;ls"), None);
     }
 
     #[test]

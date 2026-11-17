@@ -86,7 +86,7 @@ fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
 }
 
-fn which(name: &str, path: &str) -> Option<PathBuf> {
+pub fn which(name: &str, path: &str) -> Option<PathBuf> {
     if name.contains(crate::engine::is_sep) {
         return Some(PathBuf::from(name));
     }

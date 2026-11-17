@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Ctrl+R shows the commands that ran without error (issue #27), in zsh, bash, fish and nu,
-in a private tmux server. Run after cargo build --release: python3 tests/history_tmux.py."""
+"""Ctrl+R shows atuin's matches, in zsh, bash, fish and nu, in a private tmux server. A fake
+`atuin` on PATH stands in for the real one. Run after cargo build --release:
+python3 tests/history_tmux.py."""
 import os
 import shutil
 import subprocess
@@ -18,39 +19,55 @@ SHELLS = {
 }
 PROMPTS = {
     'zsh': "PROMPT='hist-test> '\n",
-    # A hook before lig's that leaves $? at 0: the failed command must still stay out.
-    'bash': "PS1='hist-test> '\nPROMPT_COMMAND='true'\n",
+    'bash': "PS1='hist-test> '\n",
     'fish': "function fish_prompt; echo -n 'hist-test> '; end\nset -g fish_greeting\n",
     'nu': "$env.config.show_banner = false\n$env.PROMPT_COMMAND = {|| 'hist-test' }\n$env.PROMPT_COMMAND_RIGHT = ''\n",
 }
+# `atuin search … [-- query]`: the records containing the query, best last, NUL-terminated.
+FAKE_ATUIN = r"""#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_ATUIN_LOG"
+q=
+while [ $# -gt 0 ]; do
+  if [ "$1" = -- ]; then q=$2; break; fi
+  shift
+done
+for c in 'echo imported-by-atuin' 'echo hist-ok'; do
+  case "$c" in *"$q"*) printf '5m\t%s\0' "$c" ;; esac
+done
+"""
 
 
 @unittest.skipUnless(shutil.which('tmux'), 'tmux is required')
 class HistoryTmux(unittest.TestCase):
-    def start(self, kind, config=''):
+    def start(self, kind, atuin=True):
         shell = SHELLS[kind]
         if not shell:
             self.skipTest(f'{kind} is unavailable')
         self.dir = tempfile.TemporaryDirectory(prefix='lig-hist-')
         directory = Path(self.dir.name)
-        home, runtime = directory / 'home', directory / 'runtime'
+        home, runtime, bin_dir = directory / 'home', directory / 'runtime', directory / 'bin'
         home.mkdir()
+        bin_dir.mkdir()
         runtime.mkdir(mode=0o700)
-        (home / '.zsh_history').write_text(': 1700000000:0;echo imported-from-zsh\n')
         # Ubuntu's /etc/zsh/zshrc runs compinit, which can stop to ask about folders' permissions.
         (home / '.zshenv').write_text('skip_global_compinit=1\n')
         self.state = directory / 'state'
+        # A real atuin on this machine's PATH would answer instead of the fake (or the absence).
+        path = os.pathsep.join(d for d in os.environ['PATH'].split(os.pathsep) if not (Path(d) / 'atuin').exists())
+        if atuin:
+            fake = bin_dir / 'atuin'
+            fake.write_text(FAKE_ATUIN)
+            fake.chmod(0o755)
+            path = f'{bin_dir}{os.pathsep}{path}'
+        self.atuin_log = directory / 'atuin.log'
         env = {'HOME': str(home), 'ZDOTDIR': str(home), 'XDG_CONFIG_HOME': str(home / '.config'),
                'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
                'XDG_STATE_HOME': str(self.state), 'XDG_RUNTIME_DIR': str(runtime), 'SHELL': shell, 'LIG_LOG': '1',
-               'HISTFILE': str(home / '.shell_history')}
+               'HISTFILE': str(home / '.shell_history'), 'PATH': path, 'FAKE_ATUIN_LOG': str(self.atuin_log)}
         rc = {'zsh': home / '.zshrc', 'bash': home / '.bashrc', 'fish': home / '.config/fish/config.fish',
               'nu': home / '.config/nushell/config.nu'}[kind]
         rc.parent.mkdir(parents=True, exist_ok=True)
         rc.write_text(PROMPTS[kind])
-        if config:
-            (home / '.config/lig').mkdir(parents=True, exist_ok=True)
-            (home / '.config/lig/config.toml').write_text(config)
         subprocess.run([BIN, 'install', kind], env=dict(os.environ, **env), check=True, capture_output=True)
         self.base = ['tmux', '-S', str(directory / 'socket'), '-f', '/dev/null']
         self.addCleanup(self.stop)
@@ -83,24 +100,13 @@ class HistoryTmux(unittest.TestCase):
         log = self.state / 'lig/lig.log'
         self.fail(f'{what}; pane:\n{self.screen()}\nlig.log:\n{log.read_text()[-3000:] if log.exists() else ""}')
 
-    def run_line(self, line):
-        # One write: with Enter sent apart, the popup could open first and take it.
-        self.tmux('send-keys', '-t', 'test:0.0', '-l', f'{line}\r')
-        self.wait(f'{line!r} did not finish', lambda s: s.rstrip().splitlines()[-1].startswith('hist-test'))
-
     def check_history(self, kind):
         self.start(kind)
-        self.run_line('echo hist-ok')
-        self.run_line('ls /no/such/dir-hist-bad')
-        self.run_line(' echo hist-hidden')
-        time.sleep(.5)
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
-        self.wait('no history popup', lambda s: 'echo hist-ok' in s and 'imported-from-zsh' in s)
-        entries = ''.join(l for l in self.screen().splitlines() if '↺' in l)
-        self.assertNotIn('dir-hist-bad', entries)
-        self.assertNotIn('hist-hidden', entries)
+        self.wait('no history popup', lambda s: 'echo hist-ok' in s and 'imported-by-atuin' in s)
+        self.assertIn('--exit=0 --exit=-1', self.atuin_log.read_text())
         self.tmux('send-keys', '-t', 'test:0.0', '-l', 'hist-o')
-        self.wait('not narrowed', lambda s: 'imported-from-zsh' not in s and 'echo hist-ok' in s)
+        self.wait('not narrowed', lambda s: 'imported-by-atuin' not in s and 'echo hist-ok' in s)
         self.tmux('send-keys', '-t', 'test:0.0', 'Enter')
         # The last prompt's line: nu may show a hint for the command under it.
         prompt = lambda s: [l for l in s.splitlines() if l.startswith('hist-test')][-1].rstrip()
@@ -118,12 +124,10 @@ class HistoryTmux(unittest.TestCase):
     def test_nu(self):
         self.check_history('nu')
 
-    def test_off_leaves_ctrl_r_to_the_shell(self):
-        self.start('bash', '[behavior]\nhistory = false\n')
-        self.run_line('echo hist-ok')
+    def test_without_atuin_ctrl_r_is_the_shells(self):
+        self.start('bash', atuin=False)
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
         self.wait("bash's own search did not open", lambda s: 'reverse-i-search' in s)
-        self.assertFalse((self.state / 'lig/history').exists())
 
 
 if __name__ == '__main__':

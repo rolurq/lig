@@ -25,22 +25,17 @@ jobs:
       - name: Install macOS test shells
         if: runner.os == 'macOS'
         run: brew install fish bash tmux
-      - name: macOS shell and mirror regressions
+      - name: macOS shell regressions
         if: runner.os == 'macOS'
         run: |
           python3 tests/shell_smoke.py
           python3 tests/fish_pty.py
-          python3 tests/zellij_macos.py
-          python3 tests/pane_mirror.py
       - name: Install Linux test shell
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh tmux
-      - name: Linux shell and mirror regressions
+      - name: Linux shell regressions
         if: runner.os == 'Linux'
-        run: |
-          python3 tests/shell_smoke.py
-          python3 tests/zellij_mirror.py
-          python3 tests/pane_mirror.py
+        run: python3 tests/shell_smoke.py
 
   windows:
     strategy:
