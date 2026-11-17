@@ -376,7 +376,7 @@ values. About a quarter of Fig's dynamic generators (JavaScript) couldn't be con
 ```bash
 cargo test                      # unit tests, every built-in spec included
 cargo build --release
-python3 tests/fish_pty.py       # PTY tests (also shell_smoke, history_tmux, pane_mirror, nu_tmux, install…)
+python3 tests/fish_pty.py       # PTY tests (also shell_smoke, history_tmux, nu_tmux, install…)
 ```
 
 The PTY tests drive `target/release/lig` (or `LIG_TEST_BIN`) in real shells (nu from `PATH`

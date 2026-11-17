@@ -368,6 +368,13 @@ mod parse_tests {
         assert_eq!(c.ui.colors.bg.as_deref(), Some("0"));
         assert!(Config::parse("[colors\n").is_err());
     }
+
+    #[test]
+    fn a_config_from_before_atuin_still_loads_with_its_other_settings() {
+        let c = Config::parse("[behavior]\nhistory = false\nonline = false\n[keys]\nhistory = ['alt-r']\n").unwrap();
+        assert!(!c.behavior.online);
+        assert_eq!(c.keys.history, ["alt-r"]);
+    }
 }
 
 /// SGR parameters for a color spec, as foreground (`38`) or background (`48`).

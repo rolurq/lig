@@ -74,9 +74,10 @@ enum Event {
         /// Ask the shell (zsh or bash) for its own completions of this line.
         ask_shell: Option<String>,
     },
-    /// Atuin's matches for `line` (Ctrl+R), best first.
+    /// Atuin's matches for `line` in `scope` (Ctrl+R, Up), best first.
     History {
         line: String,
+        scope: crate::atuin::Scope,
         items: Vec<Suggestion>,
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
@@ -642,10 +643,11 @@ fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Beh
         while let Ok(newer) = rx.try_recv() {
             req = newer;
         }
-        if let Some(scope) = &req.history {
+        if let Some(scope) = req.history {
             let _ = tx.send(Event::History {
-                items: crate::atuin::search(&req.line, req.env.path.as_deref(), scope),
+                items: crate::atuin::search(&req.line, req.env.path.as_deref(), &scope),
                 line: req.line,
+                scope,
             });
             continue;
         }
@@ -975,7 +977,7 @@ impl Session {
                     }
                     self.on_done(line, items, loading, command)
                 }
-                Event::History { line, items } => self.on_history(line, items),
+                Event::History { line, scope, items } => self.on_history(line, scope, items),
                 Event::Resize => self.on_resize(),
                 // The local nu's, even when they come during a `lig ssh`.
                 Event::ShellSpecs(specs) => match &mut self.remote {
@@ -1462,16 +1464,21 @@ impl Session {
         }
     }
 
+    /// What the history popup searches: this folder (Up) or everything (Ctrl+R).
+    fn history_scope(&self) -> crate::atuin::Scope {
+        if self.history_here { crate::atuin::Scope::Dir(self.shell_cwd()) } else { crate::atuin::Scope::Global }
+    }
+
+    /// The popup may show atuin's history: atuin is on the shell's `PATH` and a line is being edited.
+    fn atuin_ready(&self) -> bool {
+        crate::atuin::installed(self.env.path.as_deref()) && self.can_show()
+    }
+
     fn request(&mut self) {
         if self.history_mode {
             let env = self.env.clone();
-            let scope = if self.history_here {
-                crate::atuin::Scope::Dir(self.shell_cwd())
-            } else {
-                crate::atuin::Scope::Global
-            };
-            let _ =
-                self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history: Some(scope) });
+            let history = Some(self.history_scope());
+            let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual, history });
             // Enter waits for the answer, as for completions.
             if !self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line) {
                 self.loading = Some((self.line.clone(), "Searching history".into(), Instant::now()));
@@ -1634,19 +1641,12 @@ impl Session {
                 self.deferred = data[data.len() - rest..].to_vec();
                 break;
             }
-            if self.bindings.is(&key, Action::History)
-                && crate::atuin::installed(self.env.path.as_deref())
-                && self.can_show()
-            {
+            if self.bindings.is(&key, Action::History) && self.atuin_ready() {
                 self.toggle_history(false);
                 redraw = true;
                 continue;
             }
-            if self.bindings.is(&key, Action::HistoryDir)
-                && !self.popup_open()
-                && crate::atuin::installed(self.env.path.as_deref())
-                && self.can_show()
-            {
+            if self.bindings.is(&key, Action::HistoryDir) && !self.popup_open() && self.atuin_ready() {
                 // Still searching: the key is ours, not the shell's.
                 if !self.history_mode {
                     self.toggle_history(true);
@@ -1889,9 +1889,10 @@ impl Session {
         self.request();
     }
 
-    /// Atuin's matches for the line, best first; picking one replaces the line.
-    fn on_history(&mut self, line: String, items: Vec<Suggestion>) {
-        if !self.history_mode || line != self.line {
+    /// Atuin's matches for the line, best first; picking one replaces the line. A reply for the
+    /// other history (Ctrl+R then Up on the same line) is stale too.
+    fn on_history(&mut self, line: String, scope: crate::atuin::Scope, items: Vec<Suggestion>) {
+        if !self.history_mode || line != self.line || scope != self.history_scope() {
             return;
         }
         if items.is_empty() {

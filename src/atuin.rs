@@ -7,14 +7,19 @@ use std::process::{Command, Stdio};
 /// How many matches Ctrl+R shows.
 const LIMIT: &str = "50";
 
-/// Whether `atuin` is on `path`. The shell's own `PATH` is the one that counts: rc files
+/// The `PATH` atuin is looked up and run with. The shell's own is the one that counts: rc files
 /// extend it after lig starts. Lig's is the fallback until the shell reports it.
+fn shell_path(shell: Option<&str>) -> String {
+    shell.map_or_else(|| std::env::var("PATH").unwrap_or_default(), str::to_owned)
+}
+
+/// Whether `atuin` is on the shell's `PATH`.
 pub fn installed(path: Option<&str>) -> bool {
-    let own = std::env::var("PATH").unwrap_or_default();
-    crate::help::which("atuin", path.unwrap_or(&own)).is_some()
+    crate::help::which("atuin", &shell_path(path)).is_some()
 }
 
 /// What `search` looks through.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Scope {
     Global,
     /// Only what ran in this folder.
@@ -27,9 +32,7 @@ pub enum Scope {
 pub fn search(line: &str, path: Option<&str>, scope: &Scope) -> Vec<Suggestion> {
     let query = line.trim_start();
     let mut cmd = Command::new("atuin");
-    if let Some(path) = path {
-        cmd.env("PATH", path);
-    }
+    cmd.env("PATH", shell_path(path));
     // Atuin aborts without a session, and its shell hook exports one only inside the shell,
     // after lig has started. A global search doesn't use it, so any value will do.
     if std::env::var_os("ATUIN_SESSION").is_none() {
