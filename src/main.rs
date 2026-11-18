@@ -60,6 +60,9 @@ enum Cmd {
         /// Start it as a login shell
         #[arg(long)]
         login: bool,
+        /// Arguments for the shell (`-c cmd`, a script): it then runs as usual, without lig
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Print shell integration code for fish, zsh, bash, nu or PowerShell
     Init {
@@ -1158,9 +1161,9 @@ fn main() -> Result<()> {
             let path = process::executable(pid).context("cannot resolve shell executable")?;
             println!("{}", path.display());
         }
-        Cmd::Shell { shell, login } => {
+        Cmd::Shell { shell, login, args } => {
             icons::detect_in_background();
-            let code = session::run(shell.unwrap_or_else(default_shell), login)?;
+            let code = session::run(shell.unwrap_or_else(default_shell), login, &args)?;
             std::process::exit(code);
         }
         Cmd::Init { shell, part } => print!("{}", init_script(shell, part)),

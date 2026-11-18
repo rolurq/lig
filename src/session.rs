@@ -201,23 +201,24 @@ fn terminal_origin() -> (Option<(u16, u16)>, Vec<u8>) {
     (None, input)
 }
 
-/// Replace this process with the plain shell (used when lig can't run).
+/// Replace this process with the plain shell (used when lig can't run, or when it was given
+/// arguments: `-c`, a script — a command, not a session).
 #[cfg(unix)]
-fn exec_shell(shell: &Path, login: bool) -> ! {
+fn exec_shell(shell: &Path, login: bool, args: &[String]) -> ! {
     use std::os::unix::process::CommandExt;
     let mut c = std::process::Command::new(shell);
     if login {
         c.arg("-l");
     }
-    let err = c.env("LIG_DISABLE", "1").exec();
+    let err = c.args(args).env("LIG_DISABLE", "1").exec();
     eprintln!("lig: cannot run {}: {err}", shell.display());
     std::process::exit(127);
 }
 
 /// Run the plain shell in this console and exit with its status (Windows can't replace a process).
 #[cfg(windows)]
-fn exec_shell(shell: &Path, _login: bool) -> ! {
-    match std::process::Command::new(shell).env("LIG_DISABLE", "1").status() {
+fn exec_shell(shell: &Path, _login: bool, args: &[String]) -> ! {
+    match std::process::Command::new(shell).args(args).env("LIG_DISABLE", "1").status() {
         Ok(st) => std::process::exit(st.code().unwrap_or(1)),
         Err(err) => {
             eprintln!("lig: cannot run {}: {err}", shell.display());
@@ -305,9 +306,9 @@ fn shell_command(shell: &Path, login: bool) -> pty::Command {
     cmd
 }
 
-pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
-    if !term::is_terminal() {
-        exec_shell(&shell, login);
+pub fn run(shell: PathBuf, login: bool, args: &[String]) -> Result<i32> {
+    if !args.is_empty() || !term::is_terminal() {
+        exec_shell(&shell, login, args);
     }
     let (rows, cols) = term::size().unwrap_or((24, 80));
     // bash, fish, nu and PowerShell read accepted completions from this file.
@@ -315,7 +316,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         Ok(dir) => dir,
         Err(e) => {
             eprintln!("lig: {e}; starting the shell without lig");
-            exec_shell(&shell, login);
+            exec_shell(&shell, login, &[]);
         }
     };
     let insert_file = runtime.join(format!("lig-{}.insert", std::process::id()));
@@ -327,7 +328,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         Ok(spawned) => spawned,
         Err(e) => {
             eprintln!("lig: starting {} failed: {e:#}", shell.display());
-            exec_shell(&shell, login);
+            exec_shell(&shell, login, &[]);
         }
     };
     let tty = pty_handle.tty_name();

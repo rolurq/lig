@@ -1,5 +1,5 @@
-# lig: wrap this interactive shell in the lig PTY (once per terminal).
-if [[ -o interactive && -z "$LIG_DISABLE" && "$LIG_TTY" != "$TTY" && -t 0 && -t 1 \
+# lig: wrap this interactive shell in the lig PTY (once per terminal). `zsh -ic 'cmd'` runs a command, not a session: left alone.
+if [[ -o interactive && -z "$ZSH_EXECUTION_STRING" && -z "$LIG_DISABLE" && "$LIG_TTY" != "$TTY" && -t 0 && -t 1 \
       && "$TERM" != dumb && -z "$INSIDE_EMACS" && -x "@LIG_BIN@" ]]; then
   # On failure, start without lig: `return` here would skip the rest of .zshrc.
   if __lig_shell_path=$("@LIG_BIN@" shell-path $$); then

@@ -1,6 +1,18 @@
 # Wrap fish in lig unless lig itself started it; `fish` typed in another shell
-# inside lig gets its own lig, like a tmux pane.
-if status is-interactive; and test -z "$LIG_DISABLE"; and isatty stdin; and isatty stdout; and test "$TERM" != dumb; and test -z "$INSIDE_EMACS"; and test -x @LIG_BIN@
+# inside lig gets its own lig, like a tmux pane. `fish -ic 'cmd'` runs a command, not a session: left alone.
+set -l __lig_cmd 0
+set -l __lig_argv
+if test -r /proc/$fish_pid/cmdline
+    set __lig_argv (string split0 < /proc/$fish_pid/cmdline)
+else if command -q ps
+    set __lig_argv (string split ' ' -- (command ps -o args= -p $fish_pid))
+end
+for __lig_a in $__lig_argv[2..-1]
+    string match -qr -- '^(-[A-Za-z]*c[A-Za-z]*|--command(=.*)?)$' $__lig_a; and set __lig_cmd 1
+    string match -q -- '-*' $__lig_a; or break
+    test $__lig_cmd = 1; and break
+end
+if status is-interactive; and test $__lig_cmd = 0; and test -z "$LIG_DISABLE"; and isatty stdin; and isatty stdout; and test "$TERM" != dumb; and test -z "$INSIDE_EMACS"; and test -x @LIG_BIN@
     # Parent pid: /proc on Linux (ps may be missing there), ps on macOS.
     set -l __lig_parent
     if test -r /proc/$fish_pid/stat
