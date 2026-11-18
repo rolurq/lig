@@ -239,8 +239,9 @@ Type as usual; the popup shows what fits.
   `Enter` puts one on the line. Atuin's shell hooks record the commands (a command typed with
   a leading space is up to atuin's `ignorespace`). Without atuin on `PATH`, `Ctrl+R` stays
   with the shell.
-- **`↑`** with the popup closed lists what ran in the current folder (atuin's `--cwd`);
-  `Ctrl+R` from there widens it to everything. Without atuin, `↑` is the shell's.
+- **`↑`** with the popup closed lists what ran in the current folder (atuin's `--cwd`),
+  failed commands included; `Ctrl+R` from there widens it to everything that ran without
+  error. Without atuin, `↑` is the shell's.
 - **Your shell's own keys stay yours**: `Tab` once the popup is closed, fzf's `Ctrl+T`.
   Typing brings the popup back.
 

@@ -140,11 +140,14 @@ class HistoryTmux(unittest.TestCase):
         # The shell starts in the home folder; macOS may report it through /private.
         cwd = [c.split('--cwd ')[1].split(' ')[0] for c in calls if '--cwd ' in c]
         self.assertTrue(cwd and cwd[-1].endswith('/home'), calls)
+        self.assertNotIn('--exit', calls[-1])
         self.tmux('send-keys', '-t', 'test:0.0', 'Escape')
         self.wait('popup stayed', lambda s: '↺' not in s)
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
         self.wait('no global popup', lambda s: 'echo hist-ok' in s)
-        self.assertNotIn('--cwd', self.atuin_log.read_text().splitlines()[-1])
+        last = self.atuin_log.read_text().splitlines()[-1]
+        self.assertNotIn('--cwd', last)
+        self.assertIn('--exit=0 --exit=-1', last)
 
     def test_a_hanging_atuin_does_not_stall_completion(self):
         self.start('zsh', hang=True, config='[behavior]\ngenerator_timeout_ms = 500\n')

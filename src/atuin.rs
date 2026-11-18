@@ -28,18 +28,18 @@ pub enum Scope {
     Dir(std::path::PathBuf),
 }
 
-/// The commands that ran without error matching `line` (atuin's own search mode and
-/// ranking), best first; picking one replaces the line. Entries atuin imported have no exit
-/// status (-1): they stay. Atuin is found and run with the shell's `path`, and killed after
-/// `timeout`: the one worker also answers completions, which a stuck search would hold up.
+/// The commands matching `line` (atuin's own search mode and ranking), best first; picking
+/// one replaces the line. A global search (Ctrl+R) keeps only commands that ran without
+/// error; entries atuin imported have no exit status (-1) and stay. A folder search (↑)
+/// keeps failed commands too: retyping one after fixing a typo is what it is for. Atuin is
+/// found and run with the shell's `path`, and killed after `timeout`: the one worker also
+/// answers completions, which a stuck search would hold up.
 pub fn search(line: &str, path: Option<&str>, scope: &Scope, timeout: Duration) -> Vec<Suggestion> {
     let query = line.trim_start();
     let mut argv: Vec<String> = [
         "atuin",
         "search",
         "--filter-mode=global",
-        "--exit=0",
-        "--exit=-1",
         "--limit",
         LIMIT,
         "--print0",
@@ -48,8 +48,9 @@ pub fn search(line: &str, path: Option<&str>, scope: &Scope, timeout: Duration) 
     ]
     .map(String::from)
     .into();
-    if let Scope::Dir(dir) = scope {
-        argv.extend(["--cwd".into(), dir.to_string_lossy().into_owned()]);
+    match scope {
+        Scope::Global => argv.extend(["--exit=0".into(), "--exit=-1".into()]),
+        Scope::Dir(dir) => argv.extend(["--cwd".into(), dir.to_string_lossy().into_owned()]),
     }
     if !query.is_empty() {
         argv.extend(["--".into(), query.into()]);
